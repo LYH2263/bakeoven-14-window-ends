@@ -11,6 +11,7 @@ from app.schemas.schemas import (
     GanttBlock,
     OvenOut,
     ProductOut,
+    SkippedGapOut,
     WindowOut,
 )
 from app.services.oven_engine import (
@@ -18,7 +19,7 @@ from app.services.oven_engine import (
     RecipeDurations,
     build_occupancies,
     find_conflicts,
-    next_free_window,
+    find_window_with_skips,
 )
 
 api_router = APIRouter()
@@ -139,24 +140,57 @@ def conflicts(db: Session = Depends(get_db)):
     return db.scalars(select(ConflictLog).order_by(ConflictLog.id.desc())).all()
 
 
+def _fmt_hhmm(minutes: int) -> str:
+    return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+
 @api_router.get("/windows", response_model=list[WindowOut])
 def windows(product_id: int, db: Session = Depends(get_db)):
     product = db.get(Product, product_id)
     if not product:
         raise HTTPException(404, "产品不存在")
-    duration = product.ferment_min + product.bake_min
+    recipe = _recipe(product)
+    duration = recipe.total
     existing = _all_occupancies(db)
     out: list[WindowOut] = []
     for oven in db.scalars(select(Oven).order_by(Oven.id)).all():
-        w = next_free_window(existing, oven.id, duration, search_from=8 * 60, search_to=22 * 60)
-        if w:
-            out.append(
-                WindowOut(
-                    oven_id=oven.id,
-                    oven_label=oven.label,
-                    start_min=w.start,
-                    end_min=w.end,
-                    duration_min=duration,
-                )
+        w, skipped = find_window_with_skips(
+            existing, oven.id, duration, search_from=8 * 60, search_to=22 * 60
+        )
+        if w is None and not skipped:
+            continue  # 没有空档的炉不出现建议行
+        skipped_out = [
+            SkippedGapOut(
+                start_min=g.start,
+                end_min=g.end,
+                short_by_min=duration - (g.end - g.start),
             )
+            for g in skipped
+        ]
+        note = "；".join(
+            f"空隙 {_fmt_hhmm(g.start_min)}–{_fmt_hhmm(g.end_min)} "
+            f"比所需时长短 {g.short_by_min} 分钟"
+            for g in skipped_out
+        )
+        start_min = end_min = ferment_end = bake_end = None
+        if w is not None:
+            # 与甘特同一 build_occupancies，保证两段端点一致
+            ferment, bake = build_occupancies(oven.id, -1, w.start, recipe)
+            start_min = w.start
+            end_min = w.end
+            ferment_end = ferment.interval.end
+            bake_end = bake.interval.end
+        out.append(
+            WindowOut(
+                oven_id=oven.id,
+                oven_label=oven.label,
+                start_min=start_min,
+                end_min=end_min,
+                duration_min=duration,
+                ferment_end=ferment_end,
+                bake_end=bake_end,
+                skipped_gaps=skipped_out,
+                note=note,
+            )
+        )
     return out

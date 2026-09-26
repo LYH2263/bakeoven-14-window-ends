@@ -57,9 +57,19 @@ class ConflictOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class SkippedGapOut(BaseModel):
+    start_min: int
+    end_min: int
+    short_by_min: int  # 比所需时长短的分钟数
+
+
 class WindowOut(BaseModel):
     oven_id: int
     oven_label: str
-    start_min: int
-    end_min: int
+    start_min: int | None = None
+    end_min: int | None = None
     duration_min: int
+    ferment_end: int | None = None
+    bake_end: int | None = None
+    skipped_gaps: list[SkippedGapOut] = []
+    note: str = ""

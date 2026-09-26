@@ -57,6 +57,50 @@ def find_conflicts(existing: list[Occupancy], candidates: list[Occupancy]) -> li
     return hits
 
 
+def free_gaps(
+    existing: list[Occupancy],
+    oven_id: int,
+    search_from: int = 0,
+    search_to: int = 24 * 60,
+) -> list[Interval]:
+    """All maximal free half-open intervals on oven within [search_from, search_to)."""
+    busy = sorted(
+        [o.interval for o in existing if o.oven_id == oven_id],
+        key=lambda i: i.start,
+    )
+    gaps: list[Interval] = []
+    cursor = search_from
+    for iv in busy:
+        if iv.end <= cursor:
+            continue
+        if iv.start > cursor:
+            gaps.append(Interval(cursor, min(iv.start, search_to)))
+        cursor = max(cursor, iv.end)
+        if cursor >= search_to:
+            return gaps
+    if cursor < search_to:
+        gaps.append(Interval(cursor, search_to))
+    return gaps
+
+
+def find_window_with_skips(
+    existing: list[Occupancy],
+    oven_id: int,
+    duration: int,
+    search_from: int = 0,
+    search_to: int = 24 * 60,
+) -> tuple[Interval | None, list[Interval]]:
+    """Earliest fitting window plus the earlier gaps too short to hold it."""
+    if duration <= 0:
+        return None, []
+    skipped: list[Interval] = []
+    for gap in free_gaps(existing, oven_id, search_from, search_to):
+        if gap.end - gap.start >= duration:
+            return Interval(gap.start, gap.start + duration), skipped
+        skipped.append(gap)
+    return None, skipped
+
+
 def next_free_window(
     existing: list[Occupancy],
     oven_id: int,
@@ -65,22 +109,5 @@ def next_free_window(
     search_to: int = 24 * 60,
 ) -> Interval | None:
     """Find earliest half-open [start, start+duration) free on oven."""
-    if duration <= 0:
-        return None
-    busy = sorted(
-        [o.interval for o in existing if o.oven_id == oven_id],
-        key=lambda i: i.start,
-    )
-    cursor = search_from
-    for iv in busy:
-        if iv.end <= cursor:
-            continue
-        if iv.start >= cursor + duration:
-            end = cursor + duration
-            if end <= search_to:
-                return Interval(cursor, end)
-            return None
-        cursor = max(cursor, iv.end)
-    if cursor + duration <= search_to:
-        return Interval(cursor, cursor + duration)
-    return None
+    window, _ = find_window_with_skips(existing, oven_id, duration, search_from, search_to)
+    return window
