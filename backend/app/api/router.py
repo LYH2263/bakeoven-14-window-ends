@@ -11,6 +11,7 @@ from app.schemas.schemas import (
     GanttBlock,
     OvenOut,
     ProductOut,
+    ShortGapOut,
     WindowOut,
 )
 from app.services.oven_engine import (
@@ -18,7 +19,7 @@ from app.services.oven_engine import (
     RecipeDurations,
     build_occupancies,
     find_conflicts,
-    next_free_window,
+    next_free_window_detail,
 )
 
 api_router = APIRouter()
@@ -144,19 +145,31 @@ def windows(product_id: int, db: Session = Depends(get_db)):
     product = db.get(Product, product_id)
     if not product:
         raise HTTPException(404, "产品不存在")
-    duration = product.ferment_min + product.bake_min
+    recipe = _recipe(product)
+    duration = recipe.total
     existing = _all_occupancies(db)
     out: list[WindowOut] = []
     for oven in db.scalars(select(Oven).order_by(Oven.id)).all():
-        w = next_free_window(existing, oven.id, duration, search_from=8 * 60, search_to=22 * 60)
-        if w:
-            out.append(
-                WindowOut(
-                    oven_id=oven.id,
-                    oven_label=oven.label,
-                    start_min=w.start,
-                    end_min=w.end,
-                    duration_min=duration,
-                )
+        w, shorts = next_free_window_detail(
+            existing, oven.id, duration, search_from=8 * 60, search_to=22 * 60
+        )
+        if not w:
+            continue  # 没有空档的炉不出现建议行
+        # 用与甘特相同的 build_occupancies 推段端点，保证两止点完全一致
+        ferment_occ, bake_occ = build_occupancies(oven.id, -1, w.start, recipe)
+        out.append(
+            WindowOut(
+                oven_id=oven.id,
+                oven_label=oven.label,
+                start_min=w.start,
+                end_min=w.end,
+                duration_min=duration,
+                ferment_end=ferment_occ.interval.end,
+                bake_end=bake_occ.interval.end,
+                short_gaps=[
+                    ShortGapOut(start_min=g.start, end_min=g.end, short_by_min=g.short_by)
+                    for g in shorts
+                ],
             )
+        )
     return out

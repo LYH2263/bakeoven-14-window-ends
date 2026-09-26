@@ -299,3 +299,9 @@ select, input, .gantt-deck button, .toolbar button {
   justify-content: space-between;
   font-family: "IBM Plex Mono", monospace;
 }
+
+.note {
+  color: var(--bake-muted);
+  font-size: .75rem;
+  margin-top: .6rem;
+}

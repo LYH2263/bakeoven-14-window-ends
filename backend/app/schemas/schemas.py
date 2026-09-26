@@ -57,9 +57,18 @@ class ConflictOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ShortGapOut(BaseModel):
+    start_min: int
+    end_min: int
+    short_by_min: int  # 比所需时长短多少分钟
+
+
 class WindowOut(BaseModel):
     oven_id: int
     oven_label: str
     start_min: int
     end_min: int
     duration_min: int
+    ferment_end: int  # 发酵止，与同开工排入甘特的发酵段端点一致
+    bake_end: int  # 烘烤止，与同开工排入甘特的烘烤段端点一致
+    short_gaps: list[ShortGapOut] = []  # 更早但短于整段时长的空隙

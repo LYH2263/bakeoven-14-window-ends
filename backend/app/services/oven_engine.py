@@ -57,6 +57,54 @@ def find_conflicts(existing: list[Occupancy], candidates: list[Occupancy]) -> li
     return hits
 
 
+@dataclass(frozen=True)
+class ShortGap:
+    """A free gap inside the search range that is too short to use."""
+
+    start: int
+    end: int
+    short_by: int  # minutes shorter than the needed duration
+
+
+def next_free_window_detail(
+    existing: list[Occupancy],
+    oven_id: int,
+    duration: int,
+    search_from: int = 0,
+    search_to: int = 24 * 60,
+) -> tuple[Interval | None, list[ShortGap]]:
+    """Earliest fitting window plus every earlier in-range gap too short to use.
+
+    Gaps are half-open: a gap ending exactly when a busy interval starts
+    (endpoints touching) is fully usable.
+    """
+    if duration <= 0:
+        return None, []
+    busy = sorted(
+        [o.interval for o in existing if o.oven_id == oven_id],
+        key=lambda i: i.start,
+    )
+    shorts: list[ShortGap] = []
+    cursor = search_from
+    for iv in busy:
+        if iv.end <= cursor:
+            continue
+        gap_end = min(iv.start, search_to)
+        if gap_end > cursor:
+            gap_len = gap_end - cursor
+            if gap_len >= duration:
+                return Interval(cursor, cursor + duration), shorts
+            shorts.append(ShortGap(cursor, gap_end, duration - gap_len))
+        cursor = max(cursor, iv.end)
+        if cursor >= search_to:
+            return None, shorts
+    if cursor + duration <= search_to:
+        return Interval(cursor, cursor + duration), shorts
+    if search_to > cursor:
+        shorts.append(ShortGap(cursor, search_to, duration - (search_to - cursor)))
+    return None, shorts
+
+
 def next_free_window(
     existing: list[Occupancy],
     oven_id: int,
@@ -65,22 +113,5 @@ def next_free_window(
     search_to: int = 24 * 60,
 ) -> Interval | None:
     """Find earliest half-open [start, start+duration) free on oven."""
-    if duration <= 0:
-        return None
-    busy = sorted(
-        [o.interval for o in existing if o.oven_id == oven_id],
-        key=lambda i: i.start,
-    )
-    cursor = search_from
-    for iv in busy:
-        if iv.end <= cursor:
-            continue
-        if iv.start >= cursor + duration:
-            end = cursor + duration
-            if end <= search_to:
-                return Interval(cursor, end)
-            return None
-        cursor = max(cursor, iv.end)
-    if cursor + duration <= search_to:
-        return Interval(cursor, cursor + duration)
-    return None
+    window, _ = next_free_window_detail(existing, oven_id, duration, search_from, search_to)
+    return window
